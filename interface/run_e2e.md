@@ -2,8 +2,8 @@
 
 `interface/` is the **only** surface an external orchestrator (e.g. Hyperloom)
 touches. Everything volatile about the e2e workflow (the `e2e_workflow.js` arg
-names, the Claude Code `Workflow` invocation, the `--effort ultracode`
-requirement, the SDK-vs-CLI choice) is hidden behind one command and two JSON
+names, the Claude Code/OMP invocation, the `--effort ultracode` requirement in
+Claude mode, and the SDK-vs-CLI choice) is hidden behind one command and two JSON
 files. The result schema is versioned so callers can distinguish contract
 changes while the workflow evolves internally.
 
@@ -12,6 +12,19 @@ changes while the workflow evolves internally.
 ```bash
 python interface/run_e2e.py <handoff.json> <result.json> [--dry-run]
 ```
+
+Harness selection follows `--harness claude|omp`, then `GEAK_AGENT_HARNESS`,
+repository config (`.geak/config.json` or `geak.config.json`), then the
+backward-compatible default `claude`.
+
+```bash
+GEAK_AGENT_HARNESS=omp python interface/run_e2e.py <handoff.json> <result.json>
+```
+
+OMP uses the pinned Bun SDK runner and retains the same result JSON, terminal
+marker, artifact paths, and exit-code contract. Settings are namespaced under
+`GEAK_OMP_*`; verify the installation with
+`bun geak_runtime/omp_runner.ts --diagnostics`.
 
 * Exit code `0` → `result.json.status` is `ok` or `no_gain`.
 * Exit code `1` → a crash; `result.json.status == "error"` with an `error` field.

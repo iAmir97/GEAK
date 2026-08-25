@@ -1,15 +1,15 @@
 ---
 myst:
     html_meta:
-        "description": "Install GEAK 4.0.0: pip install git+ downloads the repo, installs a recent Claude Code, and the Python deps (plus a serving backend for E2E, ROCm required)."
-        "keywords": "GEAK, install, ROCm, Claude Code, Workflow, sglang, vLLM, AMD Instinct, setup"
+        "description": "Install GEAK 4.0.0: pip install git+ downloads the repo and selected Claude Code or OMP harness, plus Python deps (ROCm required for GPU workflows)."
+        "keywords": "GEAK, install, ROCm, Claude Code, OMP, Workflow, sglang, vLLM, AMD Instinct, setup"
 ---
 
 # Install GEAK
 
-GEAK 4.0.0 is not a Python package. It is a set of Workflows (`e2e_workflow.js` / `kernel_workflow.js`)
-that run inside Claude Code. "Installing" means: get the repo, get a recent Claude Code, and have a
-working ROCm environment (plus a serving backend for E2E). For a first run, see
+GEAK 4.0.0 is a Python package plus a set of Workflows (`e2e_workflow.js` / `kernel_workflow.js`). The workflows
+run through either Claude Code (the default) or the pinned OMP SDK. "Installing" means: get the repo, select one
+harness, and have a working ROCm environment (plus a serving backend for E2E). For a first run, see
 [Run a workflow](../how-to/run-agent.md).
 
 ## Prerequisites
@@ -22,15 +22,16 @@ GEAK 4.0.0 requires the following software and hardware.
 | **ROCm 6+** | `rocminfo` / `rocm-smi` must work. |
 | **A profiler** | One of `rocprof-compute`, `rocprofv3`, `rocprof` (also `omniperf` or `metrix`). Auto-detected. |
 | **Python 3.8+** | Tested on 3.12. |
-| **Claude Code ≥ 2.1.177** | Required for the dynamic Workflow feature. Check `claude --version`. |
-| **Anthropic API key** | Set as `ANTHROPIC_API_KEY`. Get one at [console.anthropic.com](https://console.anthropic.com). |
+| **Agent harness** | Claude Code ≥ 2.1.177 (default), or Bun ≥ 1.3.14 with OMP SDK 17.4.0. Select with `GEAK_AGENT_HARNESS=omp`. |
+| **Provider credentials** | Claude: `ANTHROPIC_API_KEY` or Claude login. OMP: the provider credentials configured for OMP. |
 | **Serving backend (E2E)** | A running-capable `sglang` or `vllm`, plus model weights on disk. |
 
 ## Set up GEAK
 
 Clone the repository and run the setup script.
 
-Installing GEAK installs the `geak` Python package + deps, clones the GEAK repo, and installs the Claude Code CLI.
+Installing GEAK installs the `geak` Python package + deps and clones the GEAK repo. The bootstrap validates only
+the selected harness; it does not install the other one.
 By default the repo lands in `./GEAK` under the directory you run the command from (override with `GEAK_HOME`).
 Pick either method — both end up the same:
 
@@ -38,6 +39,12 @@ Pick either method — both end up the same:
 
 ```bash
 pip install "git+https://github.com/AMD-AGI/GEAK"
+```
+
+For OMP-only installation, select OMP before running pip (Bun must already be installed):
+
+```bash
+GEAK_AGENT_HARNESS=omp pip install "git+https://github.com/AMD-AGI/GEAK"
 ```
 
 **B. Clone first** — if you'd rather have the checkout up front (e.g. to work on a branch):
@@ -56,7 +63,7 @@ export ANTHROPIC_API_KEY=<your-key>
 
 Get a key from [console.anthropic.com](https://console.anthropic.com) if you don't have one. Add the export to your shell profile (`~/.bashrc` or `~/.profile`) to avoid setting it each session.
 
-Launch GEAK:
+Launch GEAK with Claude:
 
 ```bash
 IS_SANDBOX=1 claude --dangerously-skip-permissions
@@ -65,13 +72,24 @@ IS_SANDBOX=1 claude --dangerously-skip-permissions
 Nothing is compiled at clone time — the workflow `.js` files and their `roles/`, `knowledge/`, `scripts/`
 are used directly. Sandbox mode auto-approves the permissions the workflows need.
 
+Launch GEAK with OMP:
+
+```bash
+GEAK_AGENT_HARNESS=omp bun geak_runtime/omp_runner.ts --diagnostics
+GEAK_AGENT_HARNESS=omp python interface/run_e2e.py <handoff.json> <result.json>
+```
+
 ## Verify the environment
 
 Run these checks before starting a workflow. A misconfigured environment fails deep into a multi-hour run.
 
 ```bash
-# Claude Code version (must be ≥ 2.1.177)
+# Claude mode (default)
 claude --version
+
+# OMP mode
+bun --version
+bun geak_runtime/omp_runner.ts --diagnostics
 
 # GPU is visible to ROCm
 rocminfo | grep -E "Name:|gfx"
@@ -82,7 +100,8 @@ command -v rocprof-compute || command -v rocprofv3 || command -v rocprof
 
 Expected output:
 
-- `claude --version` prints `2.1.177` or higher.
+- Claude mode: `claude --version` prints `2.1.177` or higher.
+- OMP mode: diagnostics report `detected_version: "17.4.0"` and `status: "available"`.
 - `rocminfo` lists your GPU name and a `gfx942` or `gfx950` target.
 - At least one profiler command resolves without error.
 

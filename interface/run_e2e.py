@@ -92,6 +92,10 @@ GEAK_ROOT = INTERFACE_DIR.parent
 E2E_DIR = GEAK_ROOT / "e2e_workflow"
 E2E_SCRIPT = E2E_DIR / "e2e_workflow.js"
 BENCH_SCRIPT = E2E_DIR / "scripts" / "bench_e2e.sh"
+OMP_RUNNER = GEAK_ROOT / "geak_runtime" / "omp_runner.ts"
+DEFAULT_OMP_ALLOWED_TOOLS = [
+    "bash", "read", "write", "edit", "grep", "glob", "web_search", "web_fetch",
+]
 
 # Workflow primitives are only available at this effort tier (see README).
 CLAUDE_EFFORT = os.environ.get("GEAK_CLAUDE_EFFORT", "ultracode")
@@ -1581,8 +1585,173 @@ def _invoke_via_cli(prompt: str, timeout_s: int) -> str:
     return out
 
 
-def invoke_workflow(prompt: str, timeout_s: int, eval_dir: str | None = None) -> dict:
+def _valid_harness(value: object) -> str | None:
+    value = str(value or "").strip().lower()
+    return value if value in {"claude", "omp"} else None
+
+
+def resolve_agent_harness(explicit: str | None = None) -> str:
+    """Resolve the public harness selector using the shared GEAK precedence."""
+    explicit_value = _valid_harness(explicit)
+    env_value = _valid_harness(os.environ.get("GEAK_AGENT_HARNESS"))
+    repository_value: str | None = None
+    for candidate in (GEAK_ROOT / ".geak" / "config.json", GEAK_ROOT / "geak.config.json"):
+        if not candidate.is_file():
+            continue
+        try:
+            cfg = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"invalid GEAK harness configuration at {candidate}: {exc}") from exc
+        if isinstance(cfg, dict):
+            repository_value = _valid_harness(cfg.get("agent_harness", cfg.get("harness")))
+        break
+    selected = explicit_value or env_value or repository_value or "claude"
+    if explicit and explicit_value is None:
+        raise ValueError(f"unsupported GEAK agent harness {explicit!r}; expected claude or omp")
+    if os.environ.get("GEAK_AGENT_HARNESS") and env_value is None:
+        raise ValueError(
+            f"unsupported GEAK_AGENT_HARNESS={os.environ['GEAK_AGENT_HARNESS']!r}; expected claude or omp"
+        )
+    return selected
+
+
+def _omp_allowed_tools() -> list[str]:
+    raw = os.environ.get("GEAK_OMP_ALLOWED_TOOLS", "")
+    values = [item.strip() for item in raw.split(",") if item.strip()] if raw else DEFAULT_OMP_ALLOWED_TOOLS
+    return list(dict.fromkeys(values))
+
+
+def _invocation_environment() -> dict[str, str]:
+    """Carry benchmark/runtime knobs explicitly without serializing credentials."""
+    prefixes = (
+        "BENCH", "MAGPIE", "RECIPE", "INFERENCEX", "MODEL", "TP", "PORT",
+        "HIP_VISIBLE", "CUDA_VISIBLE", "ROCR_VISIBLE", "PYTHONPATH",
+    )
+    secret_words = ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")
+    result: dict[str, str] = {}
+    for key, value in os.environ.items():
+        if not key.startswith(prefixes) or any(word in key for word in secret_words):
+            continue
+        result[key] = value
+    return result
+
+
+def _build_omp_invocation(
+    ps_args: dict,
+    h: dict,
+    timeout_s: int,
+    result_path: Path | None = None,
+) -> dict:
+    """Build the serialized, reproducible bridge object consumed by Bun."""
+    invocation: dict[str, object] = {
+        "schema_version": 1,
+        "harness": "omp",
+        "repository_root": str(GEAK_ROOT),
+        "workspace": str(E2E_DIR),
+        "workflow_script": str(E2E_SCRIPT),
+        "workflow_args": ps_args,
+        "timeout_ms": int(timeout_s * 1000),
+        "allowed_tools": _omp_allowed_tools(),
+        "artifact_paths": [
+            str(ps_args.get("eval_dir", "")),
+            str(result_path) if result_path else "",
+        ],
+        "environment": _invocation_environment(),
+        "run_id": str(h.get("run_id") or uuid.uuid4().hex),
+        "max_depth": 2,
+    }
+    model = os.environ.get("GEAK_OMP_MODEL", "").strip()
+    thinking = os.environ.get("GEAK_OMP_THINKING", "").strip()
+    if model:
+        invocation["model"] = model
+    if thinking:
+        invocation["thinking"] = thinking
+    return invocation
+
+
+def _invoke_via_omp(invocation: dict, timeout_s: int) -> str:
+    """Run the Bun/TypeScript OMP bridge while keeping Python's public contract."""
+    bun = os.environ.get("GEAK_BUN_BIN", "").strip() or shutil.which("bun")
+    if not bun:
+        raise RuntimeError("OMP harness unavailable: Bun was not found; install Bun >= 1.3.14")
+    if not OMP_RUNNER.is_file():
+        raise RuntimeError(f"OMP harness unavailable: runner is missing at {OMP_RUNNER}")
+    temp_path: str | None = None
+    stdout_path: str | None = None
+    stderr_path: str | None = None
+    child: subprocess.Popen | None = None
+    bridge_start = time.perf_counter()
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", suffix=".geak-omp.json", delete=False
+        ) as handle:
+            json.dump(invocation, handle)
+            temp_path = handle.name
+        with tempfile.NamedTemporaryFile(suffix=".stdout", delete=False) as stdout_file:
+            stdout_path = stdout_file.name
+        with tempfile.NamedTemporaryFile(suffix=".stderr", delete=False) as stderr_file:
+            stderr_path = stderr_file.name
+        with open(stdout_path, "w", encoding="utf-8") as stdout_handle, open(stderr_path, "w", encoding="utf-8") as stderr_handle:
+            child = subprocess.Popen(
+                [bun, str(OMP_RUNNER), "--invocation", temp_path],
+                cwd=str(GEAK_ROOT),
+                env=dict(os.environ, GEAK_AGENT_HARNESS="omp"),
+                stdout=stdout_handle,
+                stderr=stderr_handle,
+                text=True,
+                start_new_session=True,
+            )
+            try:
+                child.wait(timeout=timeout_s)
+            except subprocess.TimeoutExpired as exc:
+                child.kill()
+                child.wait()
+                raise TimeoutError(f"omp runner exceeded {timeout_s}s") from exc
+            except BaseException:
+                # The parent may be flushing its result contract after SIGTERM.
+                # Kill only the child PID that this function owns; never use a
+                # pattern or process-group kill that could touch the caller.
+                try:
+                    child.kill()
+                    child.wait(timeout=5)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+                raise
+        stdout = Path(stdout_path).read_text(encoding="utf-8", errors="replace")[-16 * 1024 * 1024:]
+        stderr = Path(stderr_path).read_text(encoding="utf-8", errors="replace")[-256 * 1024:]
+        if os.environ.get("GEAK_DEBUG_TIMINGS") == "1":
+            sys.stderr.write(
+                "[geak omp timings] "
+                + json.dumps({"processWall": round((time.perf_counter() - bridge_start) * 1000, 2)})
+                + "\n"
+            )
+        if child.returncode != 0:
+            detail = (stderr or stdout or "no diagnostic").strip()[-4000:]
+            raise RuntimeError(f"omp runner failed (rc={child.returncode}): {detail}")
+        return stdout.strip()
+    finally:
+        for path_value in (temp_path, stdout_path, stderr_path):
+            if path_value:
+                try:
+                    Path(path_value).unlink()
+                except OSError:
+                    pass
+
+
+def invoke_workflow(
+    prompt: str,
+    timeout_s: int,
+    eval_dir: str | None = None,
+    *,
+    harness: str | None = None,
+    invocation: dict | None = None,
+) -> dict:
     """Run the JS workflow and return its parsed JSON return value."""
+    selected = resolve_agent_harness(harness)
+    if selected == "omp":
+        if invocation is None:
+            raise ValueError("OMP workflow invocation metadata was not supplied")
+        return _parse_last_json_line(_invoke_via_omp(invocation, timeout_s))
     try:
         import claude_agent_sdk  # noqa: F401
         raw = _invoke_via_sdk(prompt, timeout_s, eval_dir)
@@ -1685,6 +1854,19 @@ def _classify_error(exc: BaseException) -> str:
     if isinstance(exc, ImportError):
         return "sdk_import_failed"
     msg = str(exc)
+    if "omp runner failed" in msg.lower() or "omp harness" in msg.lower():
+        lower = msg.lower()
+        if "[timeout]" in lower or "timed out" in lower or "exceeded" in lower:
+            return "timeout"
+        if "[aborted]" in lower or "cancel" in lower:
+            return "aborted"
+        if "[permission]" in lower or "denied" in lower or "not allowed" in lower:
+            return "permission"
+        if "[structured_output]" in lower or "schema" in lower:
+            return "structured_output"
+        if "[unavailable]" in lower or "not installed" in lower or "bun was not found" in lower:
+            return "harness_unavailable"
+        return "transport"
     if "claude CLI failed" in msg:
         return "cli_failed"
     return "runner_error"
@@ -3868,12 +4050,40 @@ def _resolve_timeout_s(argv: list[str]) -> tuple[list[str], set[str], int]:
     return positional, flags, budget
 
 
+def _extract_harness_arg(argv: list[str]) -> tuple[list[str], str | None]:
+    """Remove the explicit harness option before the legacy timeout parser."""
+    remaining: list[str] = []
+    explicit: str | None = None
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == "--harness":
+            if index + 1 >= len(argv):
+                raise ValueError("--harness requires claude or omp")
+            explicit = argv[index + 1]
+            index += 2
+            continue
+        if token.startswith("--harness="):
+            explicit = token.split("=", 1)[1]
+            index += 1
+            continue
+        remaining.append(token)
+        index += 1
+    return remaining, explicit
+
+
 def main(argv: list[str]) -> int:
-    args, flags, timeout_s = _resolve_timeout_s(argv)
+    try:
+        runner_argv, explicit_harness = _extract_harness_arg(argv)
+        selected_harness = resolve_agent_harness(explicit_harness)
+    except ValueError as exc:
+        sys.stderr.write(f"{exc}\n")
+        return 2
+    args, flags, timeout_s = _resolve_timeout_s(runner_argv)
     if len(args) < 2:
         sys.stderr.write(
             "usage: run_e2e.py <handoff.json> <result.json> "
-            "[--timeout-s N] [--dry-run]\n"
+            "[--timeout-s N] [--harness claude|omp] [--dry-run]\n"
         )
         return 2
     handoff_path, result_path = Path(args[0]), Path(args[1])
@@ -3897,6 +4107,7 @@ def main(argv: list[str]) -> int:
 
     if "--dry-run" in flags:
         print(json.dumps({"mapped_args": ps_args, "bench_client": bench_client,
+                          "harness": selected_harness,
                           "bench_launcher": bench_launcher,
                           "magpie_launch_script": os.environ.get("MAGPIE_LAUNCH_SCRIPT", ""),
                           "magpie_launch_script_source": os.environ.get("MAGPIE_LAUNCH_SCRIPT_SOURCE", ""),
@@ -4040,7 +4251,19 @@ def main(argv: list[str]) -> int:
     err: object = None
     err_class: str | None = None
     try:
-        wf = invoke_workflow(prompt, timeout_s, ps_args["eval_dir"])
+        if selected_harness == "omp":
+            omp_invocation = _build_omp_invocation(ps_args, h, timeout_s, result_path)
+            wf = invoke_workflow(
+                prompt,
+                timeout_s,
+                ps_args["eval_dir"],
+                harness=selected_harness,
+                invocation=omp_invocation,
+            )
+        else:
+            # Preserve the exact legacy call shape for Claude and downstream
+            # embedders that monkeypatch invoke_workflow in their tests.
+            wf = invoke_workflow(prompt, timeout_s, ps_args["eval_dir"])
     except Exception as e:  # scrape/crash/timeout/SIGTERM: recover from disk.
         err = e
         err_class = _classify_error(e)

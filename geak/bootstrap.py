@@ -1,12 +1,12 @@
-"""GEAK v4 bootstrap — clone the repo locally and install the Claude Code CLI.
+"""GEAK v4 bootstrap — clone the repo and install the selected agent harness.
 
-GEAK v4 is not a package you `import`; its Workflows run *inside* Claude Code
-from a repo checkout. So `pip install git+https://github.com/AMD-AGI/GEAK` does
+GEAK v4's Workflows run through a selected agent harness from a repo checkout.
+So `pip install git+https://github.com/AMD-AGI/GEAK` does
 three things:
 
   1. pip installs the Python runtime deps (pyproject.toml [project.dependencies]).
   2. This bootstrap clones the full GEAK repo to a working dir ($GEAK_HOME).
-  3. This bootstrap installs the Claude Code CLI (native installer; npm fallback).
+  3. This bootstrap validates or installs the selected agent harness.
 
 Everything here is best-effort: a failure warns but never aborts the install.
 It runs once, during the wheel build — there is no separate re-run command.
@@ -19,6 +19,9 @@ Env knobs:
   GEAK_REF         branch/tag to clone             (default: repo default branch)
   CLAUDE_VERSION   native-installer target         (default: latest)
   CLAUDE_BIN_DIR   where the CLI lands             (default: ~/.local/bin)
+  GEAK_AGENT_HARNESS  claude (default) or omp
+  GEAK_BUN_BIN      Bun executable for OMP setup    (default: bun)
+  GEAK_OMP_VERSION  pinned OMP package version     (default: 17.4.0)
   GEAK_SKIP_BOOTSTRAP  set to skip step 2+3 (CI/docker image builds)
 
 This module is imported at build time, so it must use the stdlib only.
@@ -37,6 +40,11 @@ CLAUDE_MIN_VERSION = "2.1.177"
 def _env(name: str, default: str) -> str:
     val = os.environ.get(name)
     return val if val else default
+
+
+OMP_MIN_VERSION = _env("GEAK_OMP_VERSION", "17.4.0")
+AGENT_HARNESS = _env("GEAK_AGENT_HARNESS", "claude").strip().lower()
+GEAK_BUN_BIN = _env("GEAK_BUN_BIN", "bun")
 
 
 def _invocation_dir() -> str:
@@ -228,7 +236,71 @@ def ensure_claude_code() -> None:
              "CLAUDE_VERSION" % (cur, CLAUDE_MIN_VERSION))
 
 
-# --- 3. Environment prerequisites (detect only) --------------------------
+# --- 3. OMP SDK/runtime ----------------------------------------------------
+
+def bun_version() -> str:
+    try:
+        out = subprocess.run([GEAK_BUN_BIN, "--version"], capture_output=True, text=True).stdout
+    except Exception:
+        return ""
+    m = re.search(r"[0-9]+\.[0-9]+\.[0-9]+", out or "")
+    return m.group(0) if m else ""
+
+
+def omp_cli_version() -> str:
+    try:
+        out = subprocess.run(["omp", "--version"], capture_output=True, text=True).stdout
+    except Exception:
+        return ""
+    m = re.search(r"[0-9]+\.[0-9]+\.[0-9]+", out or "")
+    return m.group(0) if m else ""
+
+
+def _local_omp_version() -> str:
+    package_file = os.path.join(
+        GEAK_HOME, "geak_runtime", "node_modules", "@oh-my-pi", "pi-coding-agent", "package.json"
+    )
+    try:
+        import json
+        with open(package_file, encoding="utf-8") as stream:
+            value = json.load(stream)
+        return str(value.get("version", ""))
+    except Exception:
+        return ""
+
+
+def ensure_omp_runtime() -> None:
+    bun = bun_version()
+    if not bun:
+        warn("Bun was not found; install Bun >= 1.3.14 or set GEAK_BUN_BIN before using GEAK_AGENT_HARNESS=omp")
+        return
+    if not _ver_ge(bun, "1.3.14"):
+        warn("Bun %s is older than the OMP minimum 1.3.14; update Bun or set GEAK_BUN_BIN" % bun)
+        return
+    log("Bun present (%s)" % bun)
+
+    runtime_dir = os.path.join(GEAK_HOME, "geak_runtime")
+    package_json = os.path.join(runtime_dir, "package.json")
+    if os.path.isfile(package_json) and _local_omp_version() != OMP_MIN_VERSION:
+        log("installing pinned OMP SDK %s" % OMP_MIN_VERSION)
+        if _run([GEAK_BUN_BIN, "install", "--cwd", runtime_dir]).returncode != 0:
+            warn("Bun could not install the pinned OMP SDK; check network access or run "
+                 "'bun install --cwd %s' manually" % runtime_dir)
+
+    local = _local_omp_version()
+    cli = omp_cli_version()
+    if local == OMP_MIN_VERSION:
+        log("OMP SDK present (%s)" % local)
+    elif cli:
+        if cli == OMP_MIN_VERSION:
+            log("OMP CLI present (%s); the runner will use its SDK fallback" % cli)
+        else:
+            warn("OMP CLI %s found, but GEAK pins SDK %s" % (cli, OMP_MIN_VERSION))
+    else:
+        warn("OMP SDK is not available at %s and the omp CLI is not on PATH" % runtime_dir)
+
+
+# --- 4. Environment prerequisites (detect only) --------------------------
 
 def check_environment() -> None:
     log("checking ROCm / profiler / serving-backend prerequisites (detect only)")
@@ -258,9 +330,20 @@ def check_environment() -> None:
         warn("  no serving backend (sglang/vllm) importable. Required for e2e_workflow only.")
 
 
-# --- 4. Next steps -------------------------------------------------------
+# --- 5. Next steps -------------------------------------------------------
 
 def print_next_steps() -> None:
+    if AGENT_HARNESS == "omp":
+        print(
+            "\n[geak-bootstrap] setup complete.\n\n"
+            "OMP is selected for GEAK workflows. From the repo root, verify the pinned runtime:\n\n"
+            "  %sGEAK_AGENT_HARNESS=omp %s geak_runtime/omp_runner.ts --diagnostics%s\n\n"
+            "Configure your OMP provider credentials/model in the environment or OMP settings, then invoke:\n\n"
+            "  %sGEAK_AGENT_HARNESS=omp python interface/run_e2e.py <handoff.json> <result.json>%s"
+            % (C_CMD, GEAK_BUN_BIN, C_OFF, C_CMD, C_OFF)
+        )
+        return
+
     on_path = any(os.path.abspath(p) == CLAUDE_BIN_DIR for p in os.environ.get("PATH", "").split(os.pathsep) if p)
     if not on_path and os.path.isfile(os.path.join(CLAUDE_BIN_DIR, "claude")):
         print(
@@ -292,10 +375,15 @@ def print_next_steps() -> None:
 
 def main() -> None:
     if os.environ.get("GEAK_SKIP_BOOTSTRAP"):
-        log("GEAK_SKIP_BOOTSTRAP set; skipping repo clone and Claude Code install")
+        log("GEAK_SKIP_BOOTSTRAP set; skipping repo clone and agent harness install")
         return
     log("GEAK_HOME=%s" % GEAK_HOME)
+    if AGENT_HARNESS not in ("claude", "omp"):
+        warn("unsupported GEAK_AGENT_HARNESS=%s; using Claude compatibility mode" % AGENT_HARNESS)
     clone_repo()
-    ensure_claude_code()
+    if AGENT_HARNESS == "omp":
+        ensure_omp_runtime()
+    else:
+        ensure_claude_code()
     check_environment()
     print_next_steps()

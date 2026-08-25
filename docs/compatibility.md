@@ -1,14 +1,14 @@
 ---
 myst:
     html_meta:
-        "description": "Verified hardware, software, runtime, and backend combinations for GEAK 4.0.0, AMD Instinct GPUs, ROCm, Claude Code, serving backends, kernel languages, and data types."
-        "keywords": "GEAK, compatibility, ROCm, AMD Instinct, MI300X, MI355X, sglang, vLLM, Triton, HIP, CK, FlyDSL, Claude Code"
+        "description": "Verified hardware, software, runtime, and backend combinations for GEAK 4.0.0, AMD Instinct GPUs, ROCm, Claude Code, OMP, serving backends, kernel languages, and data types."
+        "keywords": "GEAK, compatibility, ROCm, AMD Instinct, MI300X, MI355X, sglang, vLLM, Triton, HIP, CK, FlyDSL, Claude Code, OMP"
 ---
 
 # GEAK compatibility matrix
 
-Verified hardware, software, runtime, and backend combinations for GEAK 4.0.0 (a Claude Code +
-JS-Workflow GPU optimizer; no pip package, no CLI). Only tested configurations are listed.
+Verified hardware, software, runtime, and backend combinations for GEAK 4.0.0 (a Claude Code/OMP +
+JS-Workflow GPU optimizer). Only tested configurations are listed.
 
 Use the following matrix to view the compatibility and system requirements:
 
@@ -25,13 +25,17 @@ to the local `gfx` at build time.
 - For the Python version, the compiled artifacts in the tree are cpython-312.
 ```
 
-## Runtime — Claude Code
+## Runtime — selectable harnesses
 
 | Component | Version | Notes |
 |---|---|---|
 | Claude Code | ≥ 2.1.177 | The workflows use the dynamic Workflow (JS orchestration) feature, available only from this version. Check with `claude --version`. |
+| OMP SDK | **17.4.0** | Embedded through Bun; `bun geak_runtime/omp_runner.ts --diagnostics` must report `status: "available"`. |
+| Bun (OMP) | ≥ 1.3.14 | Required only when `GEAK_AGENT_HARNESS=omp`. |
 | Launch mode | `IS_SANDBOX=1 claude --dangerously-skip-permissions` | Workflows spawn sub-agents and run profiling, benchmark, and build commands on the box, so permissions must be auto-approved. |
-| Default model | `claude-opus-4-8` | Default used by the external-orchestrator entry point (`interface/run_e2e.py`). |
+| Harness selection | `GEAK_AGENT_HARNESS=claude|omp` | Explicit CLI/Python choice, then environment, repository config, then default `claude`. |
+| OMP defaults | MCP/LSP disabled; allowlisted tools only | OMP never becomes a second GEAK scheduler. |
+| Default model | `claude-opus-4-8` in Claude mode | OMP model selection is explicit through `GEAK_OMP_MODEL` or OMP configuration; names are not translated. |
 | Effort | `ultracode` | Default effort for `interface/run_e2e.py`. |
 
 ## Invocation mode
@@ -41,7 +45,8 @@ to the local `gfx` at build time.
 | Natural language → `Workflow` tool | Describe the task to Claude Code; it maps the prompt onto `Workflow({ scriptPath, args })`. |
 | Direct `Workflow` call (e2e) | `scriptPath: "<repo>/e2e_workflow/e2e_workflow.js"` | 
 | Direct `Workflow` call (single kernel) | `scriptPath: "<repo>/kernel_workflow/kernel_workflow.js"` | 
-| External orchestrator (Hyperloom) | `python interface/run_e2e.py <handoff.json> <result.json>` | 
+| External orchestrator (Hyperloom) | `python interface/run_e2e.py <handoff.json> <result.json>` |
+| External orchestrator (OMP) | `GEAK_AGENT_HARNESS=omp python interface/run_e2e.py <handoff.json> <result.json>` | Same result/terminal-marker contract; Bun invokes the shared runner. |
 
 ## Profilers
 

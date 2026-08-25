@@ -1,14 +1,14 @@
 ---
 myst:
     html_meta:
-        "description": "Run a GEAK v4 workflow from Claude Code: end-to-end sglang/vLLM serving-throughput optimization or single-kernel optimization, with depth modes and the accuracy gate."
-        "keywords": "GEAK, run workflow, serving throughput, single kernel, Claude Code, Workflow, sglang, vLLM, deep mode, gsm8k"
+        "description": "Run a GEAK v4 workflow from Claude Code or OMP: end-to-end sglang/vLLM serving-throughput optimization or single-kernel optimization, with depth modes and the accuracy gate."
+        "keywords": "GEAK, run workflow, serving throughput, single kernel, Claude Code, OMP, Workflow, sglang, vLLM, deep mode, gsm8k"
 ---
 
 # Run a GEAK workflow
 
-GEAK v4 runs inside Claude Code, orchestrated by deterministic JS Workflows. There is no
-`pip install` and no CLI: launch Claude Code and describe the task; it invokes the `Workflow` tool.
+GEAK v4 runs through a selectable Claude Code or OMP harness, orchestrated by deterministic JS Workflows.
+Claude remains the default interactive frontend; OMP and the Python runner use the same compatibility host.
 
 ## Prerequisites
 
@@ -17,10 +17,10 @@ Before running a workflow, ensure the following are in place.
 - **AMD Instinct™ MI GPU**: CDNA (gfx942 / gfx950), auto-detected.
 - **ROCm 6+** with `rocminfo` / `rocm-smi`, and a profiler (`rocprof-compute` / `rocprofv3` / `rocprof`).
 - **Python 3.8+**.
-- **Claude Code ≥ 2.1.177** (dynamic Workflow feature). Check `claude --version`.
+- **Agent harness:** Claude Code ≥ 2.1.177 (default), or Bun ≥ 1.3.14 with OMP SDK 17.4.0. Check the selected harness before running.
 - **For E2E:** a running-capable `sglang` or `vllm` and the model weights on disk.
 
-## Get the repo and launch Claude Code
+## Get the repo and launch a harness
 
 Clone the GEAK repository and launch Claude Code in sandbox mode.
 
@@ -29,6 +29,15 @@ claude update                          # ensure Claude Code >= 2.1.177
 git clone https://github.com/AMD-AGI/GEAK.git && cd GEAK
 IS_SANDBOX=1 claude --dangerously-skip-permissions
 ```
+
+For OMP, verify the pinned SDK and run the same workflow entry point through the shared runner:
+
+```bash
+bun geak_runtime/omp_runner.ts --diagnostics
+GEAK_AGENT_HARNESS=omp bun geak_runtime/omp_runner.ts --invocation /path/to/invocation.json
+```
+
+The OMP extension exposes the equivalent interactive command as `/geak <workflow.js> <JSON args>`.
 
 Sandbox mode auto-approves permissions, which the workflows need to run profiling, benchmark, and build
 commands.

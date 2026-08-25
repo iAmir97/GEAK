@@ -15,8 +15,9 @@ sglang, and GEAK runs the full optimization loop: it finds the bottlenecks, gene
 across paths such as Triton, FlyDSL, TileLang, and HIP, and validates the speedup on the real system. What
 normally takes weeks of expert kernel engineering becomes an automated, repeatable, and self-improving process.
 
-GEAK targets AMD Instinct MI GPUs (CDNA, e.g. gfx942 / gfx950; the on-box card is auto-detected), driven by
-Claude Code and orchestrated by deterministic JS Workflows. It ships two workflows, each for a different scenario:
+GEAK targets AMD Instinct MI GPUs (CDNA, e.g. gfx942 / gfx950; the on-box card is auto-detected), driven by a
+selectable Claude Code or Oh My Pi (OMP) agent harness and orchestrated by deterministic JS Workflows. It ships
+two workflows, each for a different scenario:
 
 | Workflow | Scope | What it optimizes |
 | --- | --- | --- |
@@ -51,14 +52,21 @@ optimize a single kernel.
 
 ### 2. Set up
 
-Installing GEAK does three things: installs the `geak` Python package + deps, clones the GEAK repo, and installs
-the Claude Code CLI. By default the repo lands in `./GEAK` under the directory you run the command from (override
-the location with `GEAK_HOME`). Pick either method — both end up the same:
+Installing GEAK installs the `geak` Python package + deps and clones the GEAK repo. The bootstrap then validates
+only the selected harness: Claude is the backward-compatible default; OMP installs the pinned Bun runtime package
+when `GEAK_AGENT_HARNESS=omp` is set. By default the repo lands in `./GEAK` under the directory you run the
+command from (override the location with `GEAK_HOME`). Pick either method — both end up the same:
 
 **A. One-liner** — run it in the directory where you want GEAK to live:
 
 ```bash
 pip install "git+https://github.com/AMD-AGI/GEAK"
+```
+
+For an OMP-only setup, select it before installing:
+
+```bash
+GEAK_AGENT_HARNESS=omp pip install "git+https://github.com/AMD-AGI/GEAK"
 ```
 
 **B. Clone first** — if you'd rather have the checkout up front (e.g. to work on a branch):
@@ -69,7 +77,9 @@ cd GEAK
 pip install .
 ```
 
-### 3. Launch Claude Code in auto mode
+### 3. Launch a harness
+
+Claude remains the default:
 
 **Set up PATH and API access**
 
@@ -102,6 +112,15 @@ IS_SANDBOX=1 claude --dangerously-skip-permissions
 
 Then just describe what you want in natural language (examples below). Claude Code resolves the paths and
 invokes the `Workflow` tool for you.
+
+OMP uses the same workflow host and external result contract. Verify the pinned SDK, then select it for a run:
+
+```bash
+bun geak_runtime/omp_runner.ts --diagnostics
+GEAK_AGENT_HARNESS=omp python interface/run_e2e.py <handoff.json> <result.json>
+```
+
+OMP-specific settings are namespaced under `GEAK_OMP_*`; see [the compatibility matrix](docs/compatibility.md).
 
 ---
 
@@ -194,7 +213,7 @@ How the workflows in this repo relate to the GEAK_v3 baseline:
 |                        | GEAK v3 (baseline)                        | kernel_workflow                                                  | e2e_workflow                                                       |
 | ---------------------- | ----------------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------- |
 | **Target**             | Single kernel                             | Single kernel                                                   | **Whole-model sglang/vLLM serving throughput**                    |
-| **Agent backend**      | miniswe                                   | Claude                                                          | Claude                                                            |
+| **Agent backend**      | miniswe                                   | Claude (default) or OMP                                         | Claude (default) or OMP                                           |
 | **Architecture**       | Orchestrator + parallel workers           | Hierarchical: Director → TechLead → Engineers → Merge           | e2e Director → System Architect → Profiler / Config Tuner / Kernel Extractor / e2e Integrator (wraps the kernel layer) |
 | **Iteration**          | Multi-round                               | Multi-round, budget-controlled                                  | Multi-round, Amdahl-triaged, budget-controlled                    |
 | **Orchestration**      | Python                                    | **Deterministic JS** — loop/parallelism/verification in code   | **Deterministic JS**                                              |
