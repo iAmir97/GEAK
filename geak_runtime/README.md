@@ -25,3 +25,14 @@ Set `GEAK_DEBUG_TIMINGS=1` for opt-in records covering OMP process wall time,
 session creation, model completion/first token, tool execution, and schema
 validation. Full transcripts remain disabled unless
 `GEAK_DEBUG_TRANSCRIPTS=1` is explicitly set.
+
+By default GEAK disables OMP extension discovery to keep workflow sessions
+isolated. If the selected model is supplied by an OMP extension (for example
+the `tokenvisor-pi` TokenVisor provider), load that provider explicitly:
+
+Example:
+  GEAK_AGENT_HARNESS=omp GEAK_OMP_MODEL='TokenVisor/Qwen/Qwen3.8-Max' GEAK_OMP_EXTENSION_PATHS='/root/.omp/plugins/node_modules/tokenvisor-pi/extensions/tokenvisor-provider.ts' ./geak_runtime/node_modules/.bin/omp
+
+Use `GEAK_OMP_ENABLE_EXTENSIONS=1` instead when ambient OMP extension discovery
+is desired. The explicit path is safer because it loads only the provider
+extension needed by GEAK.

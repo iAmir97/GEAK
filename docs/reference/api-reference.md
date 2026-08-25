@@ -270,7 +270,8 @@ Stable `handoff.json` fields: `model_path`, `framework` (→ `backend`), `tp`, `
 
 Env knobs: `GEAK_AGENT_HARNESS` (`claude` or `omp`), `GEAK_CLAUDE_MODEL` (`claude-opus-4-8`), `GEAK_CLAUDE_EFFORT` (`ultracode`),
 and, in OMP mode, `GEAK_OMP_MODEL`, `GEAK_OMP_THINKING`, `GEAK_OMP_ALLOWED_TOOLS`,
-`GEAK_OMP_ENABLE_MCP`, `GEAK_OMP_ENABLE_LSP`, and `GEAK_OMP_VERSION` (`17.4.0`).
+`GEAK_OMP_ENABLE_MCP`, `GEAK_OMP_ENABLE_LSP`, `GEAK_OMP_ENABLE_EXTENSIONS`,
+`GEAK_OMP_EXTENSION_PATHS`, and `GEAK_OMP_VERSION` (`17.4.0`).
 `GEAK_E2E_TIMEOUT_S` (`43200` = 12h), `GEAK_FINAL_RESERVE_S`, `GEAK_ROOT`,
 `GEAK_EVAL_DIR`, `INFERENCEX_PATH`.
 

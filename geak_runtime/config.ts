@@ -24,6 +24,8 @@ export interface HarnessConfig {
 	ompAllowedTools: string[];
 	ompEnableMcp: boolean;
 	ompEnableLsp: boolean;
+	ompEnableExtensions: boolean;
+	ompExtensionPaths: string[];
 	ompVersion: string;
 	ompTimeoutGraceMs: number;
 }
@@ -98,6 +100,8 @@ export function resolveHarnessConfig(repoRoot: string, explicit?: string): Harne
 		ompAllowedTools: csv(env.GEAK_OMP_ALLOWED_TOOLS ?? omp.allowed_tools, DEFAULT_OMP_ALLOWED_TOOLS),
 		ompEnableMcp: parseBoolean(env.GEAK_OMP_ENABLE_MCP ?? omp.enable_mcp, false),
 		ompEnableLsp: parseBoolean(env.GEAK_OMP_ENABLE_LSP ?? omp.enable_lsp, false),
+		ompEnableExtensions: parseBoolean(env.GEAK_OMP_ENABLE_EXTENSIONS ?? omp.enable_extensions, false),
+		ompExtensionPaths: csv(env.GEAK_OMP_EXTENSION_PATHS ?? omp.extension_paths, []),
 		ompVersion: stringSetting("GEAK_OMP_VERSION", "version", DEFAULT_OMP_VERSION) ?? DEFAULT_OMP_VERSION,
 		ompTimeoutGraceMs: numericSetting("GEAK_OMP_TIMEOUT_GRACE_MS", "timeout_grace_ms", 5_000),
 	};

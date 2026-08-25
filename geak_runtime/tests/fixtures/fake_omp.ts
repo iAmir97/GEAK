@@ -2,7 +2,10 @@ export const SessionManager = {
 	inMemory: (_cwd?: string) => ({}),
 };
 
+export let lastOptions: Record<string, any> | undefined;
+
 export async function createAgentSession(options: Record<string, any>) {
+	lastOptions = options;
 	const slow = options.modelPattern === "slow";
 	const session: any = {
 		messages: options.outputSchema ? [{ toolName: "yield", details: { data: { answer: "structured" } } }] : [],

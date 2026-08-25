@@ -323,6 +323,8 @@ GEAK_OMP_THINKING=<explicit level>
 GEAK_OMP_ALLOWED_TOOLS=bash,read,write,grep,glob,web_search
 GEAK_OMP_ENABLE_MCP=0
 GEAK_OMP_ENABLE_LSP=0
+GEAK_OMP_ENABLE_EXTENSIONS=0
+GEAK_OMP_EXTENSION_PATHS=<optional provider extension paths>
 ```
 
 Do not silently translate a Claude model name into a different OMP model. If no model is configured, fail with a clear message or use a documented OMP default. For performance comparisons, pin the same underlying model and thinking/effort level where both harnesses can use them.

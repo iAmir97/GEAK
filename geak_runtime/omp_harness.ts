@@ -168,6 +168,7 @@ export class OmpHarness implements AgentHarness {
 		let unsubscribe: (() => void) | undefined;
 		const sessionStart = performance.now();
 		try {
+			const extensionPaths = this.config.ompExtensionPaths.map(extensionPath => path.resolve(extensionPath));
 			const options: Record<string, any> = {
 				cwd: request.cwd,
 				sessionManager: module.SessionManager.inMemory(request.cwd),
@@ -176,7 +177,13 @@ export class OmpHarness implements AgentHarness {
 				enableMCP: this.config.ompEnableMcp,
 				enableLsp: this.config.ompEnableLsp,
 				autoApprove: true,
-				disableExtensionDiscovery: true,
+				// Keep GEAK sessions isolated by default. Custom OMP providers
+				// (for example TokenVisor) are commonly registered by an
+				// installed extension rather than models.yml, so allow callers
+				// to opt into ambient discovery or provide an exact extension
+				// path without changing the default tool policy.
+				disableExtensionDiscovery: !this.config.ompEnableExtensions && extensionPaths.length === 0,
+				additionalExtensionPaths: extensionPaths,
 			};
 			if (request.outputSchema !== undefined) {
 				options.outputSchema = request.outputSchema;

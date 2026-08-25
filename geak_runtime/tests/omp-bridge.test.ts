@@ -10,6 +10,8 @@ describe("OMP adapter boundary", () => {
 		expect(config.harness).toBe("omp");
 		expect(config.ompEnableMcp).toBe(false);
 		expect(config.ompEnableLsp).toBe(false);
+		expect(config.ompEnableExtensions).toBe(false);
+		expect(config.ompExtensionPaths).toEqual([]);
 		expect(config.ompAllowedTools).toContain("web_search");
 	});
 
@@ -45,6 +47,24 @@ describe("OMP adapter boundary", () => {
 		expect(result.data).toEqual({ answer: "structured" });
 		expect(result.provider).toBe("omp");
 		await expect(harness.run({ prompt: "bad tool", cwd: process.cwd(), tools: ["bash"] })).rejects.toBeInstanceOf(AgentPermissionError);
+		await harness.close();
+	});
+
+	test("loads explicitly configured provider extensions without ambient discovery", async () => {
+		const config = {
+			...resolveHarnessConfig(process.cwd(), "omp"),
+			ompModule: new URL("./fixtures/fake_omp.ts", import.meta.url).pathname,
+			ompAllowedTools: ["read"],
+			ompExtensionPaths: ["/root/.omp/plugins/node_modules/tokenvisor-pi/extensions/tokenvisor-provider.ts"],
+			ompTimeoutGraceMs: 10,
+		};
+		const harness = new OmpHarness(config);
+		await harness.run({ prompt: "provider", cwd: process.cwd(), tools: ["read"] });
+		const fake = await import("./fixtures/fake_omp.ts");
+		expect(fake.lastOptions?.disableExtensionDiscovery).toBe(false);
+		expect(fake.lastOptions?.additionalExtensionPaths).toEqual([
+			"/root/.omp/plugins/node_modules/tokenvisor-pi/extensions/tokenvisor-provider.ts",
+		]);
 		await harness.close();
 	});
 
