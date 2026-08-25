@@ -92,6 +92,12 @@ describe("workflow host compatibility contract", () => {
 		expect(harness.calls[0].outputSchemaMode).toBe("strict");
 	});
 
+	test("does not treat shell exports inside workflow strings as module exports", async () => {
+		const script = await fixture("shell-export.js", "export const meta = { name: 'fixture' };\nconst command = `export GIT_PAGER=cat`;\nreturn command;");
+		const result = await new WorkflowHost({ repositoryRoot: root, harness: new FakeHarness() }).run(script);
+		expect(result).toBe("export GIT_PAGER=cat");
+	});
+
 	test("does not expose host process state to workflow source", async () => {
 		const script = await fixture("scope.js", `return { processType: typeof process, bunType: typeof Bun, value: args.value };`);
 		const result = await new WorkflowHost({ repositoryRoot: root, harness: new FakeHarness() }).run(script, { value: 3 });

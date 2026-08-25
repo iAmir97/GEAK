@@ -30,7 +30,12 @@ function wrapWorkflowSource(source: string): string {
 	// top-level return. Replacing only that declaration keeps the source intact
 	// while making the existing async-function contract executable under Bun.
 	const transformed = source.replace(/\bexport\s+const\s+meta\s*=/, "const meta =");
-	if (/\bexport\s+(?!const\s+meta\b)/.test(transformed)) throw new Error("workflow host found an unsupported export; only `export const meta` is allowed");
+	// Match JavaScript export declarations only. Workflow prompts may contain shell
+	// snippets such as `export GIT_PAGER=cat`; a word-boundary search would mistake
+	// those strings for module exports.
+	if (/^\s*export\s+(?!(?:const\s+meta)\b)(?:(?:async\s+)?function\b|class\b|const\b|let\b|var\b|default\b|\{)/m.test(transformed)) {
+		throw new Error("workflow host found an unsupported export; only `export const meta` is allowed");
+	}
 	return `(async function(args, agent, workflow, parallel, pipeline, phase, log) {\n${transformed}\n})`;
 }
 
