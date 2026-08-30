@@ -36,3 +36,15 @@ Example:
 Use `GEAK_OMP_ENABLE_EXTENSIONS=1` instead when ambient OMP extension discovery
 is desired. The explicit path is safer because it loads only the provider
 extension needed by GEAK.
+
+GEAK sessions run restricted to the tool allowlist (`restrictToolNames`), which
+makes the OMP SDK skip extension loading entirely — including extensions that
+register a model provider. An extension-provided model therefore cannot resolve
+inside the session and the first prompt fails with `No model selected`. To fix
+this, the adapter preloads extension providers into one shared model registry
+per harness (the same `loadCliExtensionProviders` path `omp bench` uses) and
+hands that registry to every session; subagents inherit it, so one preload
+covers the whole workflow run. The preload keeps the tool policy untouched:
+only provider registration runs, never extension tools, MCP, or ambient
+capabilities. `close()` releases the shared auth storage once all sessions are
+disposed.

@@ -36,6 +36,7 @@ to the local `gfx` at build time.
 | Harness selection | `GEAK_AGENT_HARNESS=claude|omp` | Explicit CLI/Python choice, then environment, repository config, then default `claude`. |
 | OMP defaults | MCP/LSP disabled; allowlisted tools only | OMP never becomes a second GEAK scheduler. |
 | Default model | `claude-opus-4-8` in Claude mode | OMP model selection is explicit through `GEAK_OMP_MODEL` or OMP configuration; names are not translated. |
+| Extension model providers | Registered once per harness run | Restricted OMP sessions never load extensions, so `GEAK_OMP_ENABLE_EXTENSIONS`/`GEAK_OMP_EXTENSION_PATHS` providers are preloaded into a shared model registry (tool policy unchanged); otherwise an extension-provided `GEAK_OMP_MODEL` fails with `No model selected`. |
 | Effort | `ultracode` | Default effort for `interface/run_e2e.py`. |
 
 ## Invocation mode

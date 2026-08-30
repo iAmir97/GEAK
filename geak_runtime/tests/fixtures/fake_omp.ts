@@ -19,3 +19,32 @@ export async function createAgentSession(options: Record<string, any>) {
 	};
 	return { session };
 }
+
+export const catalogCalls: Array<{ cwd: string; options: Record<string, unknown> }> = [];
+export const closedAuthStorages: unknown[] = [];
+
+export const Settings = {
+	init: async (options: { cwd?: string }) => ({ kind: "fake-settings", cwd: options.cwd }),
+};
+
+export class ModelRegistry {
+	constructor(
+		readonly authStorage: unknown,
+		readonly modelsPath?: string,
+		readonly options?: { settings?: unknown },
+	) {}
+}
+
+export async function discoverAuthStorage() {
+	const storage = { close: () => closedAuthStorages.push(storage) };
+	return storage;
+}
+
+export async function loadCliExtensionProviders(
+	modelRegistry: unknown,
+	settings: unknown,
+	cwd: string,
+	options: Record<string, unknown> = {},
+) {
+	catalogCalls.push({ cwd, options: { ...options, modelRegistry, settings } });
+}

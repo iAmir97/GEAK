@@ -23,6 +23,13 @@ export interface OmpRuntime {
 	entry?: string;
 }
 
+/** Shared model catalog handed to every restricted session. */
+export interface OmpModelCatalog {
+	settings: unknown;
+	modelRegistry: unknown;
+	authStorage: { close?: () => unknown };
+}
+
 function elapsed(start: number): number { return Math.max(0, performance.now() - start); }
 
 async function disposeWithGrace(session: any, graceMs: number): Promise<void> {
@@ -142,6 +149,7 @@ export class OmpHarness implements AgentHarness {
 	private readonly config: HarnessConfig;
 	private readonly runtimePromise: Promise<OmpRuntime>;
 	private readonly sessions = new Set<any>();
+	private catalogPromise: Promise<OmpModelCatalog | undefined> | undefined;
 
 	constructor(config = resolveHarnessConfig(process.cwd(), "omp")) {
 		this.config = config;
@@ -151,6 +159,45 @@ export class OmpHarness implements AgentHarness {
 	/** Resolve the SDK once for diagnostics and for the first agent call. */
 	async ready(): Promise<OmpRuntime> {
 		return this.runtimePromise;
+	}
+
+	/**
+	 * Restricted GEAK sessions (`restrictToolNames`) never evaluate extensions,
+	 * so providers contributed by an extension (for example the installed
+	 * `tokenvisor-pi` TokenVisor plugin) never reach the session's deferred
+	 * `modelPattern` resolution and the prompt fails with "No model selected".
+	 * Mirror the SDK's one-shot CLI path (`loadCliExtensionProviders`, used by
+	 * `omp bench` / dry-balance): build one registry per harness, register the
+	 * extension providers into it, and hand that registry — plus the settings
+	 * it was built with — to every session. Subagents inherit the parent's
+	 * registry, so one preload covers the whole workflow run.
+	 *
+	 * Only runs when extensions are opted in (`GEAK_OMP_ENABLE_EXTENSIONS=1`
+	 * or explicit `GEAK_OMP_EXTENSION_PATHS`); the default isolated path keeps
+	 * building its own session-local registry.
+	 */
+	private ensureCatalog(cwd: string): Promise<OmpModelCatalog | undefined> {
+		this.catalogPromise ??= (async (): Promise<OmpModelCatalog | undefined> => {
+			if (!this.config.ompEnableExtensions && this.config.ompExtensionPaths.length === 0) return undefined;
+			const module = (await this.runtimePromise).module;
+			if (typeof module.discoverAuthStorage !== "function" || typeof module.loadCliExtensionProviders !== "function" || typeof module.ModelRegistry !== "function" || typeof module.Settings?.init !== "function") return undefined;
+			let authStorage: OmpModelCatalog["authStorage"] | undefined;
+			try {
+				authStorage = await module.discoverAuthStorage();
+				const settings = await module.Settings.init({ cwd });
+				const modelRegistry = new module.ModelRegistry(authStorage, undefined, { settings });
+				await module.loadCliExtensionProviders(modelRegistry, settings, cwd, {
+					disableExtensionDiscovery: !this.config.ompEnableExtensions,
+					additionalExtensionPaths: this.config.ompExtensionPaths.map(extensionPath => path.resolve(extensionPath)),
+				});
+				return { settings, modelRegistry, authStorage };
+			} catch (error) {
+				try { authStorage?.close?.(); } catch { /* nothing to release */ }
+				process.stderr.write(`[geak omp] extension-provider preload failed; falling back to a session-local model registry: ${String(error)}\n`);
+				return undefined;
+			}
+		})();
+		return this.catalogPromise;
 	}
 
 	async run<T = unknown>(request: AgentRequest): Promise<AgentResult<T>> {
@@ -169,6 +216,7 @@ export class OmpHarness implements AgentHarness {
 		const sessionStart = performance.now();
 		try {
 			const extensionPaths = this.config.ompExtensionPaths.map(extensionPath => path.resolve(extensionPath));
+			const catalog = await this.ensureCatalog(request.cwd);
 			const options: Record<string, any> = {
 				cwd: request.cwd,
 				sessionManager: module.SessionManager.inMemory(request.cwd),
@@ -184,6 +232,11 @@ export class OmpHarness implements AgentHarness {
 				// path without changing the default tool policy.
 				disableExtensionDiscovery: !this.config.ompEnableExtensions && extensionPaths.length === 0,
 				additionalExtensionPaths: extensionPaths,
+				// Sessions with restrictToolNames never load extensions, so an
+				// extension-provided model (e.g. TokenVisor) can only resolve when
+				// this preloaded catalog is supplied; the SDK keeps session-local
+				// registries otherwise.
+				...(catalog ? { settings: catalog.settings, modelRegistry: catalog.modelRegistry, authStorage: catalog.authStorage } : {}),
 			};
 			if (request.outputSchema !== undefined) {
 				options.outputSchema = request.outputSchema;
@@ -281,5 +334,8 @@ export class OmpHarness implements AgentHarness {
 			try { await disposeWithGrace(session, this.config.ompTimeoutGraceMs); } catch {}
 		}
 		this.sessions.clear();
+		const catalog = await this.catalogPromise;
+		this.catalogPromise = undefined;
+		try { catalog?.authStorage.close?.(); } catch { /* best effort */ }
 	}
 }
